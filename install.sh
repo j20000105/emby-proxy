@@ -8,11 +8,14 @@ BIN_ROOT=/usr/local/lib/emby-proxy
 CONFIG_ROOT=/etc/emby-proxy
 LOG_ROOT=/var/log/emby-proxy
 UNIT=/etc/systemd/system/emby-proxy.service
+CLI=/usr/local/bin/emby-proxy
 READY_DELAY=1
 WORK=''
 ROLLBACK_NEEDED=false
 MODE=''
 PREVIOUS=''
+RUNTIME_CHANGED=false
+CLI_ADDED=false
 
 die() { printf '%s\n' "$*" >&2; return 1; }
 
@@ -38,6 +41,15 @@ finish() {
   local status=$1
   trap - EXIT
   if [[ "$status" != 0 ]] && $ROLLBACK_NEEDED; then
+    if $RUNTIME_CHANGED; then
+      if [[ -f "$WORK/previous-runtime.conf" ]]; then
+        cp -p "$WORK/previous-runtime.conf" "$UNIT.d/10-emby-proxy-runtime.conf"
+      else
+        rm -f "$UNIT.d/10-emby-proxy-runtime.conf"
+      fi
+      systemctl daemon-reload || true
+    fi
+    if $CLI_ADDED; then rm -f "$CLI"; fi
     if [[ -n "$PREVIOUS" ]]; then
       if point_to "$PREVIOUS" && systemctl restart emby-proxy.service && ready; then
         printf '更新失败，已恢复上一版本。\n' >&2
@@ -103,11 +115,14 @@ Type=simple
 DynamicUser=yes
 ExecStartPre=/usr/local/lib/emby-proxy/current/emby-proxy --config /etc/emby-proxy/proxy.toml --check-config
 ExecStart=/usr/local/lib/emby-proxy/current/emby-proxy --config /etc/emby-proxy/proxy.toml
+ExecReload=/usr/local/lib/emby-proxy/current/emby-proxy --config /etc/emby-proxy/proxy.toml reload
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=20
 LogsDirectory=emby-proxy
 LogsDirectoryMode=0750
+RuntimeDirectory=emby-proxy
+RuntimeDirectoryMode=0750
 UMask=0027
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
@@ -130,8 +145,34 @@ UNIT
   install -m 0644 "$WORK/emby-proxy.service" "$UNIT"
 }
 
+write_runtime() {
+  # A managed drop-in gives existing installations the local reload socket
+  # without replacing their unit or any operator customization.
+  local dropin="$UNIT.d/10-emby-proxy-runtime.conf"
+  if [[ -f "$dropin" ]]; then cp -p "$dropin" "$WORK/previous-runtime.conf"; fi
+  RUNTIME_CHANGED=true
+  mkdir -p "$UNIT.d"
+  cat > "$WORK/runtime.conf" <<'RUNTIME'
+[Service]
+RuntimeDirectory=emby-proxy
+RuntimeDirectoryMode=0750
+ExecReload=
+ExecReload=/usr/local/lib/emby-proxy/current/emby-proxy --config /etc/emby-proxy/proxy.toml reload
+RUNTIME
+  install -m 0644 "$WORK/runtime.conf" "$dropin"
+  if [[ ! -e "$CLI" && ! -L "$CLI" ]]; then
+    mkdir -p "$(dirname "$CLI")"
+    ln -s "$BIN_ROOT/current/emby-proxy" "$CLI"
+    CLI_ADDED=true
+  fi
+  systemctl daemon-reload
+}
+
 activate() {
   local upstream=$1 listen=$2
+  if [[ -e "$CLI" || -L "$CLI" ]]; then
+    [[ -L "$CLI" && $(readlink "$CLI") == "$BIN_ROOT/current/emby-proxy" ]] || die '命令路径已被其他程序占用，停止安装。'
+  fi
   if [[ "$MODE" == install ]]; then
     printf 'listen = "%s"\ndefault_upstream = "%s"\nlog_directory = "%s"\nlog_retention_days = 30\n' \
       "$listen" "$upstream" "$LOG_ROOT" > "$WORK/proxy.toml"
@@ -146,6 +187,7 @@ activate() {
     "$CANDIDATE/emby-proxy" --config "$CONFIG_ROOT/proxy.toml" --check-config
     ROLLBACK_NEEDED=true
   fi
+  write_runtime
   point_to "$CANDIDATE"
   systemctl restart emby-proxy.service
   ready || die '新版本服务未正常运行。'

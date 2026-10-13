@@ -1,6 +1,7 @@
 listen = "0.0.0.0:80"
 default_upstream = "https://iris.pvq.cc"
 log_directory = "/var/log/emby-proxy"
+control_socket = "/run/emby-proxy/control.sock"
 log_retention_days = 30
 max_redirects = 10
 connect_timeout_seconds = 10

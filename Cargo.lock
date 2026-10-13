@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "emby-proxy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -237,8 +237,10 @@ dependencies = [
  "hyper-util",
  "reqwest",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
+ "toml_edit",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

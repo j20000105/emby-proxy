@@ -1,4 +1,6 @@
+mod cli;
 mod config;
+mod control;
 mod logging;
 mod network;
 
@@ -17,14 +19,47 @@ use std::{
     collections::HashSet,
     net::SocketAddr,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
 struct App {
     config: Config,
     client: Client,
-    body_budget: tokio::sync::Semaphore,
+    body_budget: Arc<tokio::sync::Semaphore>,
+}
+
+struct Shared {
+    current: RwLock<Arc<App>>,
+    path: Option<PathBuf>,
+    reload_lock: tokio::sync::Mutex<()>,
+}
+
+impl Shared {
+    fn snapshot(&self) -> Arc<App> {
+        self.current
+            .read()
+            .expect("configuration lock poisoned")
+            .clone()
+    }
+
+    async fn reload(&self) -> Result<()> {
+        let _reload = self.reload_lock.lock().await;
+        let path = self
+            .path
+            .as_deref()
+            .context("service has no configuration file")?;
+        let config = Config::load(Some(path)).context("configuration validation failed")?;
+        let previous = self.snapshot();
+        previous.config.validate_reload(&config)?;
+        // Fully construct the replacement before touching the active snapshot.
+        // In-flight requests keep their snapshot and the shared body budget.
+        let next = Arc::new(build_app(config, previous.body_budget.clone())?);
+        let routes = next.config.routes.len();
+        *self.current.write().expect("configuration lock poisoned") = next;
+        tracing::info!(routes, "configuration reloaded");
+        Ok(())
+    }
 }
 
 fn strip_hop_headers(headers: &mut HeaderMap) {
@@ -112,10 +147,11 @@ fn failure(status: StatusCode, access: &mut Access) -> Response<Body> {
 }
 
 async fn proxy(
-    State(app): State<Arc<App>>,
+    State(shared): State<Arc<Shared>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     mut request: Request<Body>,
 ) -> Response<Body> {
+    let app = shared.snapshot();
     let path = request.uri().path().to_ascii_lowercase();
     let websocket = request
         .headers()
@@ -358,28 +394,7 @@ async fn proxy(
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let mut path: Option<PathBuf> = None;
-    let mut check = false;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--config" => path = Some(args.next().context("--config requires a file")?.into()),
-            "--check-config" => check = true,
-            "--version" => {
-                println!("emby-proxy {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            _ => anyhow::bail!("usage: emby-proxy [--config FILE] [--check-config] [--version]"),
-        }
-    }
-    let config = Config::load(path.as_deref())?;
-    if check {
-        println!("configuration valid");
-        return Ok(());
-    }
-    let _logs = logging::init(&config.log_directory, config.log_retention_days)?;
+fn build_app(config: Config, body_budget: Arc<tokio::sync::Semaphore>) -> Result<App> {
     let mut builder = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
@@ -392,14 +407,60 @@ async fn main() -> Result<()> {
         builder = builder.dns_resolver(Arc::new(network::PublicResolver));
     }
     let client = builder.build()?;
-    let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    tracing::info!(listen=%listener.local_addr()?, version=env!("CARGO_PKG_VERSION"), "proxy started");
-    let body_budget = tokio::sync::Semaphore::new(config.max_buffered_request_bytes as usize);
-    let app = Router::new().fallback(proxy).with_state(Arc::new(App {
+    Ok(App {
         config,
         client,
         body_budget,
-    }));
+    })
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = cli::parse()?;
+    let command: Vec<_> = args.command.iter().map(String::as_str).collect();
+    anyhow::ensure!(
+        args.socket.is_none() || command == ["reload"],
+        "--socket is only valid with reload"
+    );
+    let path = cli::config_path(args.path.as_deref());
+    match command.as_slice() {
+        ["--version"] => {
+            println!("emby-proxy {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        ["--help"] => {
+            println!("{}", cli::HELP);
+            return Ok(());
+        }
+        ["reload"] => return control::reload(&path, args.socket.as_deref()).await,
+        ["route", ..] | ["default", ..] => return cli::file_command(&path, &command),
+        [] | ["--check-config"] => {}
+        _ => anyhow::bail!("{}", cli::HELP),
+    }
+    let path = if args.path.is_some() || path.exists() {
+        Some(std::fs::canonicalize(path).context("cannot open configuration file")?)
+    } else {
+        None
+    };
+    let config = Config::load(path.as_deref())?;
+    if command == ["--check-config"] {
+        println!("configuration valid");
+        return Ok(());
+    }
+    let _logs = logging::init(&config.log_directory, config.log_retention_days)?;
+    let listener = tokio::net::TcpListener::bind(config.listen).await?;
+    let socket = config.control_socket.clone();
+    let body_budget = Arc::new(tokio::sync::Semaphore::new(
+        config.max_buffered_request_bytes as usize,
+    ));
+    let shared = Arc::new(Shared {
+        current: RwLock::new(Arc::new(build_app(config, body_budget)?)),
+        path,
+        reload_lock: tokio::sync::Mutex::new(()),
+    });
+    let _control = control::start(&socket, shared.clone()).await?;
+    tracing::info!(listen=%listener.local_addr()?, version=env!("CARGO_PKG_VERSION"), "proxy started");
+    let app = Router::new().fallback(proxy).with_state(shared);
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

@@ -39,6 +39,7 @@ jobs:
         run: |
           cargo build --release --locked --target x86_64-unknown-linux-musl
           python3 tests/protocol.py target/x86_64-unknown-linux-musl/release/emby-proxy
+          python3 tests/management.py target/x86_64-unknown-linux-musl/release/emby-proxy
           file target/x86_64-unknown-linux-musl/release/emby-proxy
           if readelf -l target/x86_64-unknown-linux-musl/release/emby-proxy | grep -q INTERP; then
             echo 'Binary unexpectedly requires a dynamic loader' >&2

@@ -29,6 +29,7 @@ BIN_ROOT="$TEST_DIRECTORY/bin"
 CONFIG_ROOT="$TEST_DIRECTORY/config"
 LOG_ROOT="$TEST_DIRECTORY/logs"
 UNIT="$TEST_DIRECTORY/systemd/emby-proxy.service"
+CLI="$TEST_DIRECTORY/local-bin/emby-proxy"
 READY_DELAY=0
 MODE=$1
 version=$2
@@ -53,20 +54,31 @@ fetch_release
 activate https://fixture.example 127.0.0.1:18080
 PHASE
 bash "$TEST_DIRECTORY/phase.sh" install 1 >/dev/null
+[[ -L "$TEST_DIRECTORY/local-bin/emby-proxy" ]]
+grep -Fq 'RuntimeDirectory=emby-proxy' "$TEST_DIRECTORY/systemd/emby-proxy.service.d/10-emby-proxy-runtime.conf"
 grep -Fq 'default_upstream = "https://fixture.example"' "$TEST_DIRECTORY/config/proxy.toml"
 mkdir -p "$TEST_DIRECTORY/logs"
 echo 'keep my logs' > "$TEST_DIRECTORY/logs/existing"
 echo '# operator customization' >> "$TEST_DIRECTORY/config/proxy.toml"
 cp "$TEST_DIRECTORY/config/proxy.toml" "$TEST_DIRECTORY/expected-config"
+echo '# operator unit customization' >> "$TEST_DIRECTORY/systemd/emby-proxy.service"
+cp "$TEST_DIRECTORY/systemd/emby-proxy.service" "$TEST_DIRECTORY/expected-unit"
+# Simulate an installation from before reload support was available.
+rm -f "$TEST_DIRECTORY/systemd/emby-proxy.service.d/10-emby-proxy-runtime.conf"
 bash "$TEST_DIRECTORY/phase.sh" update 2 >/dev/null
 [[ $(cat "$TEST_DIRECTORY/bin/current/SOURCE_COMMIT") == "$(printf '%040d' 2)" ]]
 cmp "$TEST_DIRECTORY/expected-config" "$TEST_DIRECTORY/config/proxy.toml"
+cmp "$TEST_DIRECTORY/expected-unit" "$TEST_DIRECTORY/systemd/emby-proxy.service"
+grep -Fq 'ExecReload=' "$TEST_DIRECTORY/systemd/emby-proxy.service.d/10-emby-proxy-runtime.conf"
 grep -Fq 'keep my logs' "$TEST_DIRECTORY/logs/existing"
+echo '# prior managed runtime settings' >> "$TEST_DIRECTORY/systemd/emby-proxy.service.d/10-emby-proxy-runtime.conf"
+cp "$TEST_DIRECTORY/systemd/emby-proxy.service.d/10-emby-proxy-runtime.conf" "$TEST_DIRECTORY/expected-runtime"
 if bash "$TEST_DIRECTORY/phase.sh" update 3 >"$TEST_DIRECTORY/failure.log" 2>&1; then
   echo 'Expected failed activation' >&2; exit 1
 fi
 [[ $(cat "$TEST_DIRECTORY/bin/current/SOURCE_COMMIT") == "$(printf '%040d' 2)" ]]
 cmp "$TEST_DIRECTORY/expected-config" "$TEST_DIRECTORY/config/proxy.toml"
+cmp "$TEST_DIRECTORY/expected-runtime" "$TEST_DIRECTORY/systemd/emby-proxy.service.d/10-emby-proxy-runtime.conf"
 printf tampered >> "$TEST_DIRECTORY/fixture-1/$name"
 if bash "$TEST_DIRECTORY/phase.sh" update 1 >"$TEST_DIRECTORY/failure.log" 2>&1; then
   echo 'Expected checksum rejection' >&2; exit 1
