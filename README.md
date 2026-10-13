@@ -5,6 +5,34 @@ Rust 流式反向代理，默认回源 `https://iris.pvq.cc`。未知或缺少 H
 
 ## 使用
 
+Linux x86_64、systemd 主机可直接安装最新 GitHub Release：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/j20000105/emby-proxy/main/install.sh -o /tmp/emby-proxy-install.sh
+sudo bash /tmp/emby-proxy-install.sh install
+```
+
+安装会提示填写默认代理目标地址，按回车使用 `https://iris.pvq.cc`，默认
+监听 80。也可通过 `install --upstream https://example.com --listen 0.0.0.0:80`
+无交互安装。目标为 HTTP(S) 源站地址，不带路径、查询参数或密码。
+安装前需释放监听端口；脚本不会卸载其他代理程序。
+
+更新到最新 Release 并重启（保留全部现有配置和日志）：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/j20000105/emby-proxy/main/install.sh -o /tmp/emby-proxy-install.sh
+sudo bash /tmp/emby-proxy-install.sh update
+```
+
+脚本核对 SHA256，并在新程序通过配置检查后原子切换 `current`。
+新服务启动失败时恢复旧二进制并重启。配置位于
+`/etc/emby-proxy/proxy.toml`，版本目录为
+`/usr/local/lib/emby-proxy/releases/<源码提交号>`，日志位于
+`/var/log/emby-proxy/`。更新不修改 systemd 单元或配置；应用未来若需要配置
+迁移，配置校验失败会在切换前终止。旧版本保留供回滚。
+
+从源码运行：
+
 ```sh
 cargo build --release --locked
 ./target/release/emby-proxy --config examples/proxy.toml --check-config
@@ -40,6 +68,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked
 python3 tests/protocol.py target/debug/emby-proxy
+bash tests/installer.sh
 ```
 
 GitHub Actions 对 main 推送和 PR 自动验证并打包静态 Linux x86_64 二进制。

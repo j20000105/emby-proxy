@@ -61,3 +61,19 @@ first GitHub Actions run built and tested the static musl binary successfully.
 The final tagged build must pass those same gates before its checksum is
 pinned in the deployment repository. Rollback was reviewed but is not claimed
 to have been rehearsed against a production AxisNow installation.
+
+## One-command installer follow-up
+
+The separately requested `install.sh` was reviewed for URL/config quoting,
+terminal input, root-only paths, release identity, checksum verification,
+immutable release directories, concurrent installer exclusion and failure
+cleanup. Installation prompts for the default upstream; update preserves the
+existing configuration and logs. Configuration validation precedes switching
+the executable. An update that cannot start restores the prior release.
+
+`tests/installer.sh` exercises the actual installer functions in temporary
+directories, replacing only network downloads and systemd with fixtures. It
+verifies fresh installation, preserved customized configuration/logs, a new
+release, failed-start rollback and checksum rejection. ShellCheck and Bash
+syntax checks pass. Production uses the separate tracked fleet entry point;
+this fixture test is not a claim of an additional production reinstall.
