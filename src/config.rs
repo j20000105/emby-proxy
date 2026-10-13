@@ -15,6 +15,7 @@ pub struct Config {
     pub connect_timeout_seconds: u64,
     pub read_timeout_seconds: u64,
     pub max_request_body_bytes: usize,
+    pub max_buffered_request_bytes: u32,
     pub allow_private_upstreams: bool,
 }
 
@@ -30,6 +31,7 @@ impl Default for Config {
             connect_timeout_seconds: 10,
             read_timeout_seconds: 120,
             max_request_body_bytes: 16 * 1024 * 1024,
+            max_buffered_request_bytes: 64 * 1024 * 1024,
             allow_private_upstreams: false,
         }
     }
@@ -77,6 +79,8 @@ impl Config {
             || config.read_timeout_seconds == 0
             || config.max_request_body_bytes == 0
             || config.max_request_body_bytes > 64 * 1024 * 1024
+            || config.max_buffered_request_bytes < config.max_request_body_bytes as u32
+            || config.max_buffered_request_bytes > 512 * 1024 * 1024
         {
             bail!("invalid retention, redirect, timeout or request body limit");
         }

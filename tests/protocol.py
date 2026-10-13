@@ -140,6 +140,8 @@ def main():
 default_upstream = "http://127.0.0.1:{origin.server_port}"
 log_directory = "{logs}"
 max_request_body_bytes = 1024
+max_buffered_request_bytes = 1024
+read_timeout_seconds = 2
 allow_private_upstreams = true
 [routes]
 "different.example" = "http://127.0.0.1:{MEDIA}"
@@ -185,6 +187,19 @@ allow_private_upstreams = true
             echoed = json.loads(request("/post-preserve", "POST", body=b"payload")[2])
             assert echoed["method"] == "POST" and echoed["body"] == "payload"
             assert request("/echo", "POST", body=b"x" * 1025)[0] == 413
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as upload:
+                upload.sendall(b"POST /echo HTTP/1.1\r\nHost: test\r\nContent-Length: 1024\r\n\r\nx")
+                # The budget should fill once the server reads the headers.
+                for _ in range(40):
+                    if request("/echo", "POST", body=b"x")[0] == 503: break
+                    time.sleep(.025)
+                else: raise AssertionError("concurrent request-body budget not enforced")
+                assert request("/echo")[0] == 200, "empty API request blocked by uploads"
+                upload.sendall(b"x" * 1023)
+                response = http.client.HTTPResponse(upload)
+                response.begin()
+                assert response.status == 200
+                response.read()
             status, headers, body = request("/gzip")
             assert headers["content-encoding"] == "gzip" and gzip.decompress(body) == b"compressed bytes"
             assert "x-remove" not in request("/hop")[1]

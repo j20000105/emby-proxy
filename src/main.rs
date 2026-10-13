@@ -5,7 +5,7 @@ mod network;
 use anyhow::{Context, Result};
 use axum::{
     Router,
-    body::{Body, Bytes, to_bytes},
+    body::{Body, Bytes, HttpBody, to_bytes},
     extract::{ConnectInfo, State},
     http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Version, header},
 };
@@ -21,10 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone)]
 struct App {
     config: Config,
     client: Client,
+    body_budget: tokio::sync::Semaphore,
 }
 
 fn strip_hop_headers(headers: &mut HeaderMap) {
@@ -190,6 +190,16 @@ async fn proxy(
     if let Some(host) = host.as_ref().and_then(|h| HeaderValue::from_str(h).ok()) {
         headers.insert("x-forwarded-host", host);
     }
+    let maximum = app.config.max_request_body_bytes as u64;
+    let size = body.size_hint().upper().unwrap_or(maximum);
+    if size > maximum {
+        return failure(StatusCode::PAYLOAD_TOO_LARGE, &mut access);
+    }
+    // Keep the permit until all possible redirect request replays are finished.
+    // Empty GETs consume no budget; video response bodies are never buffered.
+    let Ok(_body_permit) = app.body_budget.try_acquire_many(size as u32) else {
+        return failure(StatusCode::SERVICE_UNAVAILABLE, &mut access);
+    };
     let mut data = match tokio::time::timeout(
         Duration::from_secs(app.config.read_timeout_seconds),
         to_bytes(body, app.config.max_request_body_bytes),
@@ -384,9 +394,12 @@ async fn main() -> Result<()> {
     let client = builder.build()?;
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(listen=%listener.local_addr()?, version=env!("CARGO_PKG_VERSION"), "proxy started");
-    let app = Router::new()
-        .fallback(proxy)
-        .with_state(Arc::new(App { config, client }));
+    let body_budget = tokio::sync::Semaphore::new(config.max_buffered_request_bytes as usize);
+    let app = Router::new().fallback(proxy).with_state(Arc::new(App {
+        config,
+        client,
+        body_budget,
+    }));
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

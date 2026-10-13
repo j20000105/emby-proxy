@@ -35,4 +35,29 @@ HEAD returned 200 with no body. Fixture credentials remain outside Git.
 
 ## Pass 2 — lifecycle, release and deployment
 
-Pending final review of the build workflow and deployment/rollback contract.
+Reviewed request buffering and cancellation, response-body ownership,
+timeout scope, UTC retention, shutdown, static linkage, CI privileges,
+artifact identity, systemd sandbox permissions, cutover and rollback.
+
+Findings fixed:
+
+- Per-request body limits alone did not bound concurrent buffering. Added a
+  shared 64 MiB reservation budget; large concurrent uploads receive 503 while
+  empty API and video GET requests continue. A socket-level regression test
+  fills the budget with an unfinished upload and checks both behaviors.
+- Restaging a release must not truncate an executable already in use.
+  Deployment extracts into a temporary directory and compares or renames it.
+- AxisNow retirement must preserve exact packages and stopped runtime state.
+  The deployment contract saves root-only recovery archives before purge,
+  validates checksums and automatically restores a failed activation. Recovery
+  unpacks packages, restores runtime state, then configures the packages.
+- Normal proxy upgrades must not recreate retired AxisNow service masks.
+  Service handling is conditional on the audited packages being installed.
+
+Verification: native format/lint/unit/protocol checks pass, including the new
+buffer-budget regression. Deployment Bash scripts pass ShellCheck and syntax
+checks; systemd directives validate with local executable placeholders. The
+first GitHub Actions run built and tested the static musl binary successfully.
+The final tagged build must pass those same gates before its checksum is
+pinned in the deployment repository. Rollback was reviewed but is not claimed
+to have been rehearsed against a production AxisNow installation.
