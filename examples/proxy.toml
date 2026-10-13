@@ -1,0 +1,13 @@
+listen = "0.0.0.0:80"
+default_upstream = "https://iris.pvq.cc"
+log_directory = "/var/log/emby-proxy"
+log_retention_days = 30
+max_redirects = 10
+connect_timeout_seconds = 10
+read_timeout_seconds = 120
+max_request_body_bytes = 16777216
+
+# Unmatched hosts, direct-IP requests and wcdn.a.puq.li all use the default.
+# Add an exact domain only when it needs a different origin:
+# [routes]
+# "example.com" = "https://other-origin.example.com"
