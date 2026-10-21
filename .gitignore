@@ -1,0 +1,6 @@
+/target/
+/dist/
+/data/
+/logs/
+/proxy.toml
+__pycache__/

@@ -1,0 +1,19 @@
+listen = "0.0.0.0:80"
+# Required: replace the empty value with your origin, e.g. https://origin.example.com.
+# This template intentionally fails validation until an origin is supplied.
+default_upstream = ""
+log_directory = "/var/log/emby-proxy"
+control_socket = "/run/emby-proxy/control.sock"
+log_retention_days = 30
+max_redirects = 10
+# Follow only these redirect domains (including subdomains); return others.
+# An empty list passes every redirect to the client.
+# redirect_follow_domains = ["example.com"]
+connect_timeout_seconds = 10
+read_timeout_seconds = 120
+max_request_body_bytes = 16777216
+
+# Unmatched hosts and direct-IP requests use the explicitly configured origin.
+# Add an exact domain only when it needs a different origin:
+# [routes]
+# "example.com" = "https://other-origin.example.com"
