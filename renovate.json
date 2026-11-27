@@ -5,5 +5,21 @@
   ],
   "dependencyDashboard": {
     "enabled": true
-  }
+  },
+  "packageRules": [
+    {
+      "description": "reqwest 0.x minor bumps change Cargo feature names and TLS provider APIs; require approval for manual code migration.",
+      "matchDatasources": [
+        "crate"
+      ],
+      "matchPackageNames": [
+        "reqwest"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    }
+  ]
 }
